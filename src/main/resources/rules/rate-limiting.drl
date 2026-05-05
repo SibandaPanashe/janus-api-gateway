@@ -1,0 +1,40 @@
+package com.sibanda.co.zw.janusgateway.rules;
+
+import com.sibanda.co.zw.janusgateway.model.ClientProfile;
+
+dialect "mvel"
+
+// Rule 1: Block free tier if they exceed 10 requests per second
+rule "Free Tier - Rate Limit Per Second"
+    when
+        $client: ClientProfile(
+            plan == "free",
+            requestCountSecond >= limitPerSecond,
+            blocked == false
+        )
+    then
+        System.out.println("[Drools] Blocking free client: " + $client.getClientId() +
+            " - Reached " + $client.getRequestCountSecond() + " req/s (limit: " + $client.getLimitPerSecond() + ")");
+        $client.setBlocked(true);
+        update($client);
+end
+
+// Rule 2: Block if already flagged
+rule "Blocked Client - Deny All"
+    when
+        $client: ClientProfile(blocked == true)
+    then
+        System.out.println("[Drools] Request denied for blocked client: " + $client.getClientId());
+        // This flag will be read by the gateway service to return 429
+end
+
+// Rule 3: Pay-as-you-go surcharge
+rule "Pay As You Go - Add Surcharge"
+    when
+        $client: ClientProfile(plan == "pay-as-you-go", blocked == false)
+    then
+        System.out.println("[Drools] Adding $0.01 surcharge for client: " + $client.getClientId());
+        modify($client) {
+            setSurchargeAmount($client.getSurchargeAmount() + 0.01)
+        };
+end
