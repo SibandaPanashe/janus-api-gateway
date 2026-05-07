@@ -18,10 +18,15 @@ public class GatewayService {
 
     private final KieContainer kieContainer;
     private final StringRedisTemplate redisTemplate;
+    private final KeyHashingService keyHashingService;
 
-    public GatewayService(KieContainer kieContainer, StringRedisTemplate redisTemplate) {
+    // Update constructor:
+    public GatewayService(KieContainer kieContainer,
+                          StringRedisTemplate redisTemplate,
+                          KeyHashingService keyHashingService) {
         this.kieContainer = kieContainer;
         this.redisTemplate = redisTemplate;
+        this.keyHashingService = keyHashingService;
     }
 
     public boolean processRequest(String apiKey) {
@@ -48,15 +53,23 @@ public class GatewayService {
     }
 
     private ClientProfile resolveClient(String apiKey) {
-        String redisKey = "client:" + apiKey;
+        // Hash the incoming API key for lookup
+        String keyHash = keyHashingService.hashKey(apiKey);
+        String redisKey = "client:hash:" + keyHash;
+
         String plan = (String) redisTemplate.opsForHash().get(redisKey, "plan");
         if (plan == null) {
             plan = "free";
         }
 
+        String clientId = (String) redisTemplate.opsForHash().get(redisKey, "clientId");
+        if (clientId == null) {
+            clientId = keyHash.substring(0, 12); // Truncated hash as fallback ID
+        }
+
         return ClientProfile.builder()
-                .clientId(apiKey)
-                .apiKeyHash(apiKey)
+                .clientId(clientId)
+                .apiKeyHash(keyHash)  // Now stores the hash, not the raw key
                 .plan(plan)
                 .requestCountSecond(0)
                 .requestCountMinute(0)
