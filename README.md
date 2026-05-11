@@ -510,6 +510,24 @@ The architecture reflects constraints common in regulated environments where cor
 
 ---
 
+# Documentation
+
+- 📖 [User Guide — Step-by-step with curl examples](https://fresh-kingfisher-b5c.notion.site/Janus-API-Gateway-Developer-User-Guide-368b5334756b4e9c819876f7d66d0504)
+
+- 📘 [Interactive API Reference (Redocly)](docs/api-reference.html)
+
+- 🔧 [Swagger UI](http://localhost:8080/swagger-ui.html)
+
+- 📋 [OpenAPI Specification](openapi.json)
+
+- 📦 [Postman Collection](postman/)
+
+- 🏗️ [Architecture Decision Records](docs/adr/)
+
+- ⚙️ [System & Operations Documentation](docs/JANUS_DOCUMENTATION.md)
+
+---
+
 # License
 
 MIT License — see [LICENSE](LICENSE) for details.

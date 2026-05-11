@@ -1,0 +1,28 @@
+services:
+  janus-core:
+    image: ghcr.io/sibandapanashe/janus-api-gateway/janus-core:latest
+    container_name: janus-core
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/janus
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      JANUS_JWT_SECRET: ${JANUS_JWT_SECRET}
+      LOG_LEVEL: WARN
+      HEALTH_SHOW_DETAILS: when-authorized
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - janus-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
