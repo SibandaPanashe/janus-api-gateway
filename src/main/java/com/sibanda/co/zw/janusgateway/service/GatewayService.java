@@ -1,7 +1,6 @@
 package com.sibanda.co.zw.janusgateway.service;
 
 import com.sibanda.co.zw.janusgateway.model.ClientProfile;
-import org.kie.api.runtime.KieContainer;
 import org.kie.api.runtime.KieSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,15 +15,14 @@ public class GatewayService {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayService.class);
 
-    private final KieContainer kieContainer;
+    private final DynamicRuleService dynamicRuleService;
     private final StringRedisTemplate redisTemplate;
     private final KeyHashingService keyHashingService;
 
-    // Update constructor:
-    public GatewayService(KieContainer kieContainer,
+    public GatewayService(DynamicRuleService dynamicRuleService,
                           StringRedisTemplate redisTemplate,
                           KeyHashingService keyHashingService) {
-        this.kieContainer = kieContainer;
+        this.dynamicRuleService = dynamicRuleService;
         this.redisTemplate = redisTemplate;
         this.keyHashingService = keyHashingService;
     }
@@ -36,7 +34,7 @@ public class GatewayService {
         incrementCounters(client);
         log.info("[Janus] After increment: requestCountSecond={}", client.getRequestCountSecond());
 
-        KieSession session = kieContainer.newKieSession();
+        KieSession session = dynamicRuleService.getKieContainer().newKieSession();
         session.insert(client);
         int rulesFired = session.fireAllRules();
         session.dispose();
@@ -53,7 +51,6 @@ public class GatewayService {
     }
 
     private ClientProfile resolveClient(String apiKey) {
-        // Hash the incoming API key for lookup
         String keyHash = keyHashingService.hashKey(apiKey);
         String redisKey = "client:hash:" + keyHash;
 
@@ -64,17 +61,25 @@ public class GatewayService {
 
         String clientId = (String) redisTemplate.opsForHash().get(redisKey, "clientId");
         if (clientId == null) {
-            clientId = keyHash.substring(0, 12); // Truncated hash as fallback ID
+            clientId = keyHash.substring(0, 12);
+        }
+
+        String limitStr = (String) redisTemplate.opsForHash().get(redisKey, "limitPerSecond");
+        int limitPerSecond = 10;
+        if (limitStr != null) {
+            try {
+                limitPerSecond = Integer.parseInt(limitStr);
+            } catch (NumberFormatException ignored) {}
         }
 
         return ClientProfile.builder()
                 .clientId(clientId)
-                .apiKeyHash(keyHash)  // Now stores the hash, not the raw key
+                .apiKeyHash(keyHash)
                 .plan(plan)
                 .requestCountSecond(0)
                 .requestCountMinute(0)
-                .limitPerSecond(10)
-                .limitPerMinute(100)
+                .limitPerSecond(limitPerSecond)
+                .limitPerMinute(limitPerSecond * 10)
                 .blocked(false)
                 .surchargeAmount(0.0)
                 .lastResetTime(Instant.now())
@@ -85,17 +90,10 @@ public class GatewayService {
         long now = Instant.now().toEpochMilli();
         String windowKey = "usage:" + client.getClientId() + ":second";
 
-        // Add current request with timestamp as score
         redisTemplate.opsForZSet().add(windowKey, String.valueOf(now), now);
-
-        // Remove entries older than 1 second (1000 ms)
         long oneSecondAgo = now - 1000;
         redisTemplate.opsForZSet().removeRangeByScore(windowKey, 0, oneSecondAgo);
-
-        // Count remaining entries (requests in the last 1 second)
         Long count = redisTemplate.opsForZSet().zCard(windowKey);
-
-        // Set TTL so Redis cleans up stale keys
         redisTemplate.expire(windowKey, 5, TimeUnit.SECONDS);
 
         client.setRequestCountSecond(count != null ? count.intValue() : 0);
@@ -103,7 +101,7 @@ public class GatewayService {
     }
 
     private void saveClient(ClientProfile client) {
-        String redisKey = "client:" + client.getClientId();
+        String redisKey = "client:hash:" + client.getApiKeyHash();
         redisTemplate.opsForHash().put(redisKey, "plan", client.getPlan());
         redisTemplate.opsForHash().put(redisKey, "blocked", String.valueOf(client.isBlocked()));
         redisTemplate.expire(redisKey, 5, TimeUnit.MINUTES);
