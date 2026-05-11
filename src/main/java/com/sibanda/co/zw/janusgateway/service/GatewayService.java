@@ -1,6 +1,7 @@
 package com.sibanda.co.zw.janusgateway.service;
 
 import com.sibanda.co.zw.janusgateway.model.ClientProfile;
+import com.sibanda.co.zw.janusgateway.repository.ClientRepository;
 import org.kie.api.runtime.KieSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,13 +19,16 @@ public class GatewayService {
     private final DynamicRuleService dynamicRuleService;
     private final StringRedisTemplate redisTemplate;
     private final KeyHashingService keyHashingService;
+    private final ClientRepository clientRepository;
 
     public GatewayService(DynamicRuleService dynamicRuleService,
                           StringRedisTemplate redisTemplate,
-                          KeyHashingService keyHashingService) {
+                          KeyHashingService keyHashingService,
+                          ClientRepository clientRepository) {
         this.dynamicRuleService = dynamicRuleService;
         this.redisTemplate = redisTemplate;
         this.keyHashingService = keyHashingService;
+        this.clientRepository = clientRepository;
     }
 
     public boolean processRequest(String apiKey) {
@@ -55,16 +59,33 @@ public class GatewayService {
         String redisKey = "client:hash:" + keyHash;
 
         String plan = (String) redisTemplate.opsForHash().get(redisKey, "plan");
+        String clientId = (String) redisTemplate.opsForHash().get(redisKey, "clientId");
+        String limitStr = (String) redisTemplate.opsForHash().get(redisKey, "limitPerSecond");
+
+        // Fallback to PostgreSQL if Redis misses
         if (plan == null) {
-            plan = "free";
+            var clientEntity = clientRepository.findByApiKeyHash(keyHash);
+            if (clientEntity.isPresent()) {
+                plan = clientEntity.get().getPlan();
+                clientId = clientEntity.get().getClientId();
+                limitStr = String.valueOf(clientEntity.get().getRateLimitPerSecond());
+
+                // Repopulate Redis cache
+                redisTemplate.opsForHash().put(redisKey, "clientId", clientId);
+                redisTemplate.opsForHash().put(redisKey, "plan", plan);
+                redisTemplate.opsForHash().put(redisKey, "limitPerSecond", limitStr);
+                redisTemplate.expire(redisKey, 365, TimeUnit.DAYS);
+
+                log.info("[Janus] Repopulated Redis from PostgreSQL for client: {}", clientId);
+            } else {
+                plan = "free";
+            }
         }
 
-        String clientId = (String) redisTemplate.opsForHash().get(redisKey, "clientId");
         if (clientId == null) {
             clientId = keyHash.substring(0, 12);
         }
 
-        String limitStr = (String) redisTemplate.opsForHash().get(redisKey, "limitPerSecond");
         int limitPerSecond = 10;
         if (limitStr != null) {
             try {

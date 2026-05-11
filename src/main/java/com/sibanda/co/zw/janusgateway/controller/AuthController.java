@@ -1,5 +1,6 @@
 package com.sibanda.co.zw.janusgateway.controller;
 
+import com.sibanda.co.zw.janusgateway.repository.ClientRepository;
 import com.sibanda.co.zw.janusgateway.service.JwtService;
 import com.sibanda.co.zw.janusgateway.service.KeyHashingService;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -15,18 +16,18 @@ public class AuthController {
     private final JwtService jwtService;
     private final KeyHashingService keyHashingService;
     private final StringRedisTemplate redisTemplate;
+    private final ClientRepository clientRepository;
 
     public AuthController(JwtService jwtService,
                           KeyHashingService keyHashingService,
-                          StringRedisTemplate redisTemplate) {
+                          StringRedisTemplate redisTemplate,
+                          ClientRepository clientRepository) {
         this.jwtService = jwtService;
         this.keyHashingService = keyHashingService;
         this.redisTemplate = redisTemplate;
+        this.clientRepository = clientRepository;
     }
 
-    /**
-     * Exchange an API key for a JWT access token + refresh token.
-     */
     @PostMapping("/token")
     public ResponseEntity<?> exchangeApiKey(@RequestBody Map<String, String> request) {
         String apiKey = request.get("apiKey");
@@ -34,17 +35,25 @@ public class AuthController {
             return ResponseEntity.badRequest().body(Map.of("error", "apiKey is required"));
         }
 
-        // Hash the API key and look up the client
         String keyHash = keyHashingService.hashKey(apiKey);
         String redisKey = "client:hash:" + keyHash;
         String clientId = (String) redisTemplate.opsForHash().get(redisKey, "clientId");
         String plan = (String) redisTemplate.opsForHash().get(redisKey, "plan");
 
+        // Fallback to PostgreSQL if Redis misses
         if (clientId == null) {
-            return ResponseEntity.status(401).body(Map.of("error", "Invalid API key"));
+            var entity = clientRepository.findByApiKeyHash(keyHash);
+            if (entity.isPresent()) {
+                clientId = entity.get().getClientId();
+                plan = entity.get().getPlan();
+                // Repopulate Redis
+                redisTemplate.opsForHash().put(redisKey, "clientId", clientId);
+                redisTemplate.opsForHash().put(redisKey, "plan", plan);
+            } else {
+                return ResponseEntity.status(401).body(Map.of("error", "Invalid API key"));
+            }
         }
 
-        // Generate tokens
         String accessToken = jwtService.generateAccessToken(clientId, plan, keyHash);
         String refreshToken = jwtService.generateRefreshToken(clientId, keyHash);
 
@@ -57,9 +66,6 @@ public class AuthController {
         ));
     }
 
-    /**
-     * Use a refresh token to get a new access token.
-     */
     @PostMapping("/refresh")
     public ResponseEntity<?> refreshToken(@RequestBody Map<String, String> request) {
         String refreshToken = request.get("refreshToken");
@@ -75,7 +81,6 @@ public class AuthController {
         String clientId = claims.getSubject();
         String keyHash = claims.get("keyHash", String.class);
 
-        // Look up current plan from Redis using the stored keyHash
         String redisKey = "client:hash:" + keyHash;
         String plan = (String) redisTemplate.opsForHash().get(redisKey, "plan");
         if (plan == null) {

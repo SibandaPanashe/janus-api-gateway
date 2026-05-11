@@ -29,3 +29,10 @@ replay_pid*
 # Build
 target/
 HELP.md
+
+# Environment secrets
+.env
+
+# Environment secrets
+.env
+!.env.example

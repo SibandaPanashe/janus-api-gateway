@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
   tomcat:
     relaxed-host-validation: true
 
@@ -7,23 +7,10 @@ spring:
   application:
     name: janus-gateway
 
-  # Redis
-  data:
-    redis:
-      host: localhost
-      port: 6380
-      timeout: 2000ms
-      lettuce:
-        pool:
-          max-active: 8
-          max-idle: 8
-          min-idle: 2
-
-  # PostgreSQL
   datasource:
-    url: jdbc:postgresql://localhost:5433/janus
-    username: janus
-    password: janus-dev-password
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5433}/${POSTGRES_DB:janus}
+    username: ${POSTGRES_USER:janus}
+    password: ${POSTGRES_PASSWORD:janus-dev-password}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -31,7 +18,17 @@ spring:
       idle-timeout: 300000
       connection-timeout: 10000
 
-  # JPA
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+
   jpa:
     hibernate:
       ddl-auto: validate
@@ -41,13 +38,11 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
 
-  # Flyway
   flyway:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
 
-# Actuator
 management:
   endpoints:
     web:
@@ -55,16 +50,18 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      show-details: always
+      show-details: ${HEALTH_SHOW_DETAILS:always}
       probes:
         enabled: true
 
-# Custom Janus config
 janus:
   rules:
     directory: src/main/resources/rules
-
   jwt:
     secret: ${JANUS_JWT_SECRET:janus-dev-secret-change-in-production-min-256-bits}
-    access-token-ttl: 3600000     # 1 hour in ms
-    refresh-token-ttl: 2592000000 # 30 days in ms
+    access-token-ttl: ${JANUS_JWT_ACCESS_TTL:3600000}
+    refresh-token-ttl: ${JANUS_JWT_REFRESH_TTL:2592000000}
+
+logging:
+  level:
+    com.sibanda: ${LOG_LEVEL:INFO}
