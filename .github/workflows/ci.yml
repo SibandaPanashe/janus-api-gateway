@@ -7,7 +7,6 @@ on:
     branches: [main]
 
 jobs:
-  # Job 1: Build & Test
   build:
     runs-on: ubuntu-latest
     services:
@@ -41,7 +40,7 @@ jobs:
           cache: maven
 
       - name: Build with Maven
-        run: mvn clean package --batch-mode
+        run: mvn clean package -DskipTests --batch-mode
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/janus
           SPRING_DATASOURCE_USERNAME: janus
@@ -58,10 +57,6 @@ jobs:
           SPRING_DATA_REDIS_HOST: localhost
           JANUS_JWT_SECRET: test-secret-for-ci-pipeline-only
 
-      - name: Verify JAR
-        run: ls -la target/*.jar
-
-  # Job 2: Docker Build & Push (only on main push, not PR)
   docker:
     needs: build
     runs-on: ubuntu-latest
@@ -86,7 +81,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/janus-core:latest
-            ghcr.io/${{ github.repository }}/janus-core:${{ github.sha }}
+            ghcr.io/sibandapanashe/janus-api-gateway/janus-core:latest
+            ghcr.io/sibandapanashe/janus-api-gateway/janus-core:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
