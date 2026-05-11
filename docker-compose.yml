@@ -15,30 +15,6 @@ services:
     networks:
       - janus-net
 
-  nginx:
-    image: nginx:1.25-alpine
-    container_name: janus-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-      - ./nginx/cache:/var/cache/nginx/janus_cache
-    depends_on:
-      redis:
-        condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - janus-net
-    healthcheck:
-      test: ["CMD", "nginx", "-t"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   postgres:
     image: postgres:16-alpine
     container_name: janus-postgres
@@ -51,12 +27,59 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-janus} -d ${POSTGRES_DB:-janus}" ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-janus} -d ${POSTGRES_DB:-janus}"]
       interval: 5s
       timeout: 3s
       retries: 3
     networks:
       - janus-net
+
+  janus-core:
+    build: .
+    container_name: janus-core
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/janus
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-janus}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-janus-dev-password}
+      JANUS_JWT_SECRET: ${JANUS_JWT_SECRET:-janus-dev-secret-change-in-production-min-256-bits}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - janus-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: janus-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/cache:/var/cache/nginx/janus_cache
+    depends_on:
+      janus-core:
+        condition: service_healthy
+    networks:
+      - janus-net
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   redis-data:
