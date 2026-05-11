@@ -4,12 +4,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
-[![Status](https://img.shields.io/badge/Status-In%20Development-blue.svg)]()
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-green.svg)]()
 
 ---
 
-## What Is Janus?
+# What Is Janus?
 
 Janus is a high-performance, transparent, and ruthlessly configurable API gateway built for API-first companies that need more than what off-the-shelf solutions offer.
 
@@ -19,7 +20,7 @@ The key differentiator: **the business logic (rate limits, billing rules, access
 
 ---
 
-## The Problem It Solves
+# The Problem It Solves
 
 Building an API is the easy part. Monetizing it and protecting it at scale is where most teams struggle.
 
@@ -30,177 +31,495 @@ Without a purpose-built gateway you face these problems:
 - **Abuse is invisible until it's too late** — no real-time visibility into who is hammering your system
 - **Upgrades are manual** — customers email you to increase their limits; you change a config file by hand
 
-Janus solves all four. The rules engine makes limits dynamic. The Redis-backed usage tracker makes billing automatic. The dashboard gives customers self-service visibility. The Nginx edge layer catches abuse before it reaches your application.
+Janus solves all four.
+
+The rules engine makes limits dynamic. The Redis-backed usage tracker makes billing automatic. The dashboard gives customers self-service visibility. The Nginx edge layer catches abuse before it reaches your application.
 
 ---
 
-## Architecture Overview
+# Architecture Overview
 
+```text
+                          INTERNET
+                             |
+                             v
+
++----------------------------------------------------------+
+|                    TIER 1: NGINX EDGE                    |
+|                                                          |
+|   +--------------+  +--------------+  +---------------+  |
+|   | Connection   |  | Rate Limit   |  | Micro-Cache   |  |
+|   | 20 conn/IP   |  | 30 req/s     |  | 5s GET TTL    |  |
+|   +--------------+  +--------------+  +---------------+  |
+|                                                          |
+|   Load Shedding + Custom JSON Error Pages                |
++--------------------------+-------------------------------+
+                           |
+                           v
+
++----------------------------------------------------------+
+|                TIER 2: JANUS CORE ENGINE                 |
+|                  (Spring Boot 3.4)                       |
+|                                                          |
+|   +--------------+     +--------------+  +-------------+ |
+|   | API Key      |---->| Redis        |  | PostgreSQL  | |
+|   | Resolution   |     | - Counters   |  | - Clients   | |
+|   +--------------+     | - Cache      |  | - Rules     | |
+|                        +--------------+  | - Audit Log | |
+|   +--------------+                       +-------------+ |
+|   | Drools Rules |                                       |
+|   | Engine       |     +--------------+                  |
+|   | - Limits     |     | JWT Auth     |                  |
+|   | - Billing    |     | - HS384      |                  |
+|   | - Surcharges |     | - Refresh    |                  |
+|   +--------------+     +--------------+                  |
+|                                                          |
+|   Trace IDs | Structured Logging | Event Audit Trail     |
++----------------------------------------------------------+
+                           |
+                           v
+
++----------------------------------------------------------+
+|                TIER 3: ADMIN DASHBOARD                   |
+|                (React + TypeScript)                      |
+|                                                          |
+|   Real-time Usage | Plan Management | API Key Rotation   |
+|   (WebSocket + Redis Pub/Sub)                            |
++----------------------------------------------------------+
 ```
-                        ┌─────────────────────────────────────────┐
-                        │           CLIENT / API CONSUMER          │
-                        └──────────────────┬──────────────────────┘
-                                           │ HTTPS Request
-                                           ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                        TIER 1: NGINX EDGE                            │
-│                                                                      │
-│   ┌─────────────────┐  ┌──────────────────┐  ┌───────────────────┐  │
-│   │  Connection     │  │  Rate Limiting   │  │  Micro-Cache      │  │
-│   │  Limiting       │  │  (Burst Control) │  │  (Public GETs)    │  │
-│   │  limit_conn     │  │  limit_req_zone  │  │  proxy_cache      │  │
-│   └─────────────────┘  └──────────────────┘  └───────────────────┘  │
-└──────────────────────────────────────┬───────────────────────────────┘
-                                       │ Proxied Request
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                     TIER 2: JANUS CORE ENGINE                        │
-│                        (Spring Boot)                                 │
-│                                                                      │
-│   ┌─────────────────┐        ┌──────────────────────────────────┐   │
-│   │  API Key        │───────▶│     Redis                        │   │
-│   │  Resolution     │        │   - Client profiles              │   │
-│   └─────────────────┘        │   - Request counters             │   │
-│                              │   - Idempotency keys             │   │
-│   ┌─────────────────┐        │   - Usage pub/sub                │   │
-│   │  Drools Rules   │◀───────└──────────────────────────────────┘   │
-│   │  Engine         │                                                │
-│   │  - Plan limits  │        ┌──────────────────────────────────┐   │
-│   │  - Billing      │───────▶│     PostgreSQL                   │   │
-│   │  - Surcharges   │        │   - Audit log (hash-chained)     │   │
-│   └─────────────────┘        │   - Client accounts              │   │
-│                              │   - Rule definitions             │   │
-│   ┌─────────────────┐        └──────────────────────────────────┘   │
-│   │  Spring AOP     │                                                │
-│   │  - Audit log    │                                                │
-│   │  - Idempotency  │                                                │
-│   └─────────────────┘                                                │
-└──────────────────────────────────────┬───────────────────────────────┘
-                                       │
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                    TIER 3: ADMIN DASHBOARD                           │
-│                      (React + TypeScript)                            │
-│                                                                      │
-│   Real-time usage graph  │  Plan management  │  API key rotation    │
-└──────────────────────────────────────────────────────────────────────┘
+
+---
+
+# Core Features
+
+## SHA-256 API Key Hashing
+
+API keys are generated with a `sk-` prefix and 32 bytes of secure random entropy. Only the SHA-256 hash is stored — never the raw key itself.
+
+- Raw key returned exactly once at creation time
+- Redis stores hot cache entries
+- PostgreSQL remains source of truth
+- Automatic cache repopulation on Redis miss
+
+---
+
+## JWT Authentication (HS384)
+
+Exchange an API key for a signed JWT access token.
+
+### Token Configuration
+
+| Token | TTL |
+|---|---|
+| Access Token | 1 hour |
+| Refresh Token | 30 days |
+
+### Security Design
+
+- Stateless JWT validation
+- No Redis lookup required for verification
+- HS384 signature algorithm
+- Refresh tokens embed key hash for stateless rotation
+
+---
+
+## Dynamic Rule-Based Rate Limiting
+
+Rate limits are defined in Drools `.drl` files stored in PostgreSQL and hot-reloaded at runtime.
+
+This means an administrator can:
+
+- Increase free tier limits
+- Add enterprise-specific billing logic
+- Introduce surge pricing
+- Block abusive tenants
+
+…without restarting the application or deploying new code.
+
+### Runtime Rule Operations
+
+```bash
+POST /admin/rules
+PATCH /admin/rules/{id}/toggle
+POST /admin/rules/reload
 ```
 
----
-
-## Core Features
-
-### Dynamic Rule-Based Rate Limiting
-Rate limits are not hard-coded. They are defined in Drools rule files (`.drl`) stored in the database and hot-reloaded at runtime. A non-technical administrator can change the rate limit for the "free" tier from 10 req/sec to 15 req/sec without touching the codebase or triggering a deployment.
-
-### Tiered Access Control
-Clients are assigned a plan — `free`, `starter`, `pro`, `enterprise`, or `pay-as-you-go`. Drools evaluates the client's plan and request profile on every request and makes the allow/block/throttle decision in milliseconds.
-
-### Redis-Backed Usage Tracking
-Every request increments a counter in Redis using the pattern `API_REQUEST_COUNT:{clientId}:{minute}`. This enables per-minute, per-hour, and per-day usage visibility with zero database writes on the hot path.
-
-### Tamper-Evident Audit Logging
-Every access decision, rule change, and administrative action is written to a hash-chained audit log. Each record stores the SHA-256 hash of itself combined with the previous record, making tampering detectable. This satisfies audit requirements in regulated environments.
-
-### Idempotency Protection
-State-changing requests accept an `Idempotency-Key` header. Janus stores the result of the first execution in Redis. Duplicate requests within the TTL window return the cached result without re-execution. This prevents double-billing and double-processing under retry conditions.
-
-### Real-Time Dashboard
-API consumers see their usage in real time via a React dashboard. Usage data is pushed from the Janus engine via Redis Pub/Sub and WebSocket, not polled. The dashboard shows current request count, remaining quota, plan tier, and billing estimate.
+Rules compile into a fresh `KieContainer` and are atomically swapped with zero downtime.
 
 ---
 
-## Tech Stack
+## Redis Sliding Window Counters
 
-| Layer | Technology | Why |
-|---|---|---|
-| Edge / Reverse Proxy | Nginx | Connection limiting, burst control, micro-caching before requests hit Java |
-| Core Engine | Java 17, Spring Boot 3 | Enterprise-grade, battle-tested in financial services |
-| Rules Engine | Drools | Separates rate-of-change of business rules from application code |
-| Caching / Counters | Redis | Sub-millisecond reads for API key lookup and request counting |
-| Persistence | PostgreSQL | Audit log, client accounts, rule definitions |
-| Cross-Cutting Concerns | Spring AOP | Audit logging and idempotency enforcement without polluting business logic |
-| Security | Spring Security | API key authentication, endpoint protection |
-| Dashboard | React, TypeScript | Type-safe, real-time client-facing interface |
+Janus implements true sliding-window rate limiting using Redis sorted sets.
 
----
+Algorithm flow:
 
-## Theoretical Foundation
+1. Request timestamp added to sorted set
+2. Entries older than 1 second pruned
+3. Remaining count becomes current rate
+4. Rule engine decides allow/block
 
-This project is not just engineering instinct. The design decisions are grounded in computer science research:
+Benefits:
 
-**Rate Limiting Algorithm — Token Bucket**
-The rate limiting implementation follows the Token Bucket algorithm, where each client has a conceptual bucket that refills at a fixed rate. Requests consume tokens. An empty bucket means the request is rejected. This prevents the boundary exploit present in naive fixed-window rate limiters, where a client can double their effective rate by straddling a window boundary.
-
-**Load Shedding at the Edge**
-The Nginx configuration is designed around the principle of load shedding: reject work at the earliest possible layer rather than letting it propagate inward. A request blocked at Nginx costs microseconds. A request that reaches the database and fails costs milliseconds and holds a connection. The multi-layer Nginx config (connection limit → rate limit → cache) implements this principle explicitly.
-
-**Tamper-Evident Logging — Hash Chaining**
-The audit log uses the same structural principle as a blockchain: each record contains the hash of the previous record. This means deleting or modifying any record breaks the chain and is immediately detectable by the verification endpoint. This design is informed by cryptographic integrity principles applied to append-only audit systems.
-
-**Distributed Locking for Idempotency**
-The idempotency key implementation uses Redis `SET NX` (set if not exists) as a distributed lock to handle the in-flight race condition: two identical requests arriving simultaneously before either has completed. Only one acquires the lock; the other waits or fails fast.
+- Millisecond precision
+- No fixed-window boundary exploit
+- Same architectural approach used by Kong and AWS API Gateway
 
 ---
 
-## Subscription Tiers
+## PostgreSQL Persistent Storage
 
-| Plan | Requests/sec | Requests/month | Price |
+Persistent entities include:
+
+- Clients
+- Rules
+- Audit events
+- API key metadata
+
+### Database Strategy
+
+| Component | Role |
+|---|---|
+| Redis | Fast operational cache |
+| PostgreSQL | Durable source of truth |
+| Flyway | Schema migration management |
+
+On Redis cache miss, Janus transparently falls back to PostgreSQL and repopulates Redis automatically.
+
+---
+
+## Structured Audit Logging
+
+Every gateway decision is logged with:
+
+- Trace ID
+- Client ID
+- Subscription plan
+- Request count
+- Response code
+- Rule evaluation outcome
+
+### Logging Stack
+
+- Logback
+- Logstash JSON encoder
+- Structured JSON logs
+- Correlated trace propagation
+
+Development mode uses human-readable console logging with trace identifiers.
+
+---
+
+## Nginx Edge Protection (3-Layer Defense)
+
+### Layer 1 — Connection Limiting
+
+- 20 concurrent connections per IP
+
+### Layer 2 — Static Rate Limiting
+
+- 30 req/sec
+- Burst handling enabled
+
+### Layer 3 — Micro-Caching
+
+- 5-second TTL
+- Public GET endpoint optimization
+
+### Benchmark Result
+
+> 91 of 100 abusive requests blocked at the Nginx edge before reaching Java.
+
+---
+
+## Hot-Reload Rules Engine
+
+Rules can be created, enabled, disabled, or reloaded while the system is live.
+
+### Features
+
+- Runtime rule creation
+- Dynamic enable/disable
+- Atomic rule swaps
+- Zero-downtime reloads
+- PostgreSQL-backed rule persistence
+
+---
+
+## Dockerized Deployment
+
+Entire platform deploys with one command:
+
+```bash
+docker-compose up -d --build
+```
+
+### Stack Components
+
+- Redis
+- PostgreSQL
+- Janus Core
+- Nginx
+
+### Infrastructure Features
+
+- Multi-stage Docker builds
+- Alpine JRE images
+- Health checks on all services
+- Containerized local development
+
+---
+
+## Secrets Management (12-Factor)
+
+All secrets are externalized via environment variables.
+
+### Configuration Design
+
+- `.env.example` committed
+- `.env` ignored by Git
+- `${VAR:default}` Spring configuration pattern
+- Docker-compatible configuration
+
+---
+
+# Tech Stack
+
+| Layer | Technology | Version | Why |
 |---|---|---|---|
-| Free | 10 | 100,000 | $0 |
-| Starter | 50 | 500,000 | $29/mo |
-| Pro | 200 | 5,000,000 | $99/mo |
-| Enterprise | Custom | Unlimited | Contact |
-| Pay-as-you-go | 100 | Metered | $0.01/1k req |
-
-All limits are enforced by the Drools rules engine and can be adjusted without redeployment.
-
----
-
-## Build Roadmap
-
-- [x] Project setup and architecture design
-- [ ] **Week 1–2:** Nginx edge configuration with multi-layer rate limiting
-- [ ] **Week 3–4:** Spring Boot core, Redis API key resolution, Drools integration
-- [ ] **Week 5–6:** Monetization rules, usage counters, idempotency layer
-- [ ] **Week 7–8:** React dashboard, WebSocket usage streaming, load testing
-- [ ] **Post-MVP:** Rule hot-reload UI, multi-region Redis, Prometheus metrics endpoint
+| Edge Proxy | Nginx | 1.25-alpine | Event-driven abuse prevention |
+| Core Engine | Java + Spring Boot | 17 + 3.4.3 | Enterprise-grade runtime |
+| Rules Engine | Drools | 10.0.0 | Dynamic business rule execution |
+| Cache / Counter | Redis | 7-alpine | Sub-millisecond operations |
+| Database | PostgreSQL | 16-alpine | Durable persistence and audit |
+| Migrations | Flyway | 10.x | Versioned schema evolution |
+| Auth Tokens | JJWT | 0.12.5 | HS384 JWT signing |
+| Logging | Logback + Logstash | 7.4 | Structured JSON logs |
+| Infrastructure | Docker Compose | 3.8 | One-command deployment |
 
 ---
 
-## Architecture Decision Records
+# Subscription Tiers
 
-Key engineering decisions are documented in [`/docs/adr`](/docs/adr). These explain not just *what* was built but *why*, including the trade-offs considered and rejected.
+| Plan | Requests/sec | API Keys | Price |
+|---|---|---|---|
+| Free | 10 | 1 | $0 |
+| Pro | 100 | 10 | $49/mo |
+| Enterprise | 1,000 | Unlimited | Custom |
+| Pay-as-you-go | Unlimited | 1 | $0.01/request |
+
+All limits enforced dynamically through the Drools rules engine.
+
+---
+
+# Quick Start
+
+## Prerequisites
+
+- Docker
+- Docker Compose
+- Java 17+
+- Maven 3.9+
+
+---
+
+## One-Command Deploy
+
+```bash
+git clone https://github.com/SibandaPanashe/janus-api-gateway.git
+
+cd janus-api-gateway
+
+# Generate SSL certificates
+mkdir -p nginx/ssl
+
+cd nginx/ssl
+
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout janus.key \
+  -out janus.crt \
+  -subj "/CN=api.janus.local"
+
+cd ../..
+
+# Add local DNS mapping
+echo "127.0.0.1 api.janus.local" | sudo tee -a /etc/hosts
+
+# Configure environment
+cp .env.example .env
+
+# Start full platform
+docker-compose up -d --build
+
+# Verify services
+curl http://localhost:8080/api/health
+
+curl -k https://api.janus.local/api/health
+```
+
+---
+
+## Create an API Key
+
+```bash
+curl -X POST http://localhost:8080/admin/keys \
+  -H "Content-Type: application/json" \
+  -d '{
+    "plan": "pro",
+    "clientId": "my-app"
+  }'
+```
+
+---
+
+## Exchange API Key for JWT
+
+```bash
+curl -X POST http://localhost:8080/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "apiKey": "sk-YOUR_KEY"
+  }'
+```
+
+---
+
+## Make Authenticated Requests
+
+### API Key Authentication
+
+```bash
+curl -H "X-API-Key: sk-YOUR_KEY" \
+  http://localhost:8080/api/v1/proxy
+```
+
+### JWT Authentication
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT" \
+  http://localhost:8080/api/v1/proxy/jwt
+```
+
+---
+
+## Test Rate Limiting
+
+```bash
+for i in {1..15}; do
+  curl -s \
+    -H "X-API-Key: sk-FREE_KEY" \
+    http://localhost:8080/api/v1/proxy
+
+  echo ""
+done
+```
+
+Expected behavior:
+
+- First requests return `200 OK`
+- Requests beyond plan limit return `429 Too Many Requests`
+
+---
+
+## Hot-Reload a Rule
+
+```bash
+curl -X POST http://localhost:8080/admin/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Custom Rule",
+    "description": "Runtime enterprise rule",
+    "priority": 50,
+    "drlContent": "package com.sibanda.co.zw.janusgateway.rules;
+import com.sibanda.co.zw.janusgateway.model.ClientProfile;
+dialect \"mvel\"
+
+rule \"Enterprise Rule\"
+when
+    $client: ClientProfile(plan == \"enterprise\")
+then
+    System.out.println(\"Enterprise client: \" + $client.getClientId());
+end"
+  }'
+```
+
+---
+
+# API Reference
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/health` | None | Health check with Redis status |
+| `POST` | `/admin/keys` | None | Create API key |
+| `POST` | `/auth/token` | None | Exchange API key for JWT |
+| `POST` | `/auth/refresh` | None | Refresh JWT token |
+| `GET` | `/api/v1/proxy` | `X-API-Key` | API key authenticated request |
+| `GET` | `/api/v1/proxy/jwt` | `Bearer Token` | JWT authenticated request |
+| `GET` | `/admin/rules` | None | List all rules |
+| `GET` | `/admin/rules/active` | None | List active rules |
+| `POST` | `/admin/rules` | None | Create runtime rule |
+| `PATCH` | `/admin/rules/{id}/toggle` | None | Enable/disable rule |
+| `POST` | `/admin/rules/reload` | None | Reload rules from database |
+| `GET` | `/actuator/health` | Restricted | Spring Boot health endpoint |
+| `GET` | `/actuator/metrics` | Restricted | JVM and HTTP metrics |
+
+---
+
+# Architecture Decision Records
 
 | ADR | Decision |
 |---|---|
-| [ADR-001](/docs/adr/001-drools-over-hardcoded-rules.md) | Why Drools instead of application-level if-statements |
-| [ADR-002](/docs/adr/002-redis-for-rate-limit-counters.md) | Why Redis counters instead of database writes on the hot path |
-| [ADR-003](/docs/adr/003-nginx-edge-layer.md) | Why Nginx handles the first line of rate limiting, not Spring |
-| [ADR-004](/docs/adr/004-hash-chained-audit-log.md) | Why the audit log uses hash chaining instead of a standard append log |
+| ADR-001 | Drools rules engine over hard-coded application logic |
+| ADR-002 | Redis sliding windows for rate limit counters |
+| ADR-003 | Nginx handles first-line rate limiting |
+| ADR-004 | PostgreSQL-backed audit event logging |
 
 ---
 
-## Engineering Context
+# Build Roadmap
 
-This project was designed and built during an industrial attachment at an IT consultancy operating in a regulated banking environment. The requirements that shaped its architecture — idempotency, tamper-evident audit trails, dynamic business rules, structured logging — are not academic exercises. They are production constraints encountered daily in financial services engineering.
-
-The design reflects the realities of building software where correctness, auditability, and operational safety matter more than development speed.
+- [x] Project setup and architecture design
+- [x] Nginx edge configuration with layered protection
+- [x] Spring Boot core engine
+- [x] Redis counters and caching
+- [x] Drools integration
+- [x] JWT authentication
+- [x] PostgreSQL persistence
+- [x] Hot-reload rule engine
+- [x] Structured audit logging
+- [x] Dockerized deployment
+- [ ] React admin dashboard
+- [ ] Stripe billing integration
+- [ ] Multi-region Redis clusters
+- [ ] Cloud deployment automation
 
 ---
 
-## Getting Started
+# Engineering Context
 
-> ⚠️ **Under active development.** Setup instructions will be published at Week 2 of the build roadmap.
+This project was designed around production-grade financial systems engineering principles:
+
+- Dynamic business rule evaluation
+- Auditability
+- Operational safety
+- Idempotency
+- Structured observability
+- Load shedding at the edge
+
+The architecture reflects constraints common in regulated environments where correctness and traceability matter more than rapid feature iteration.
 
 ---
 
-## License
+# License
 
 MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-## Author
+# Author
 
-Built with intent. Questions, feedback, and contributions welcome.
+Built with intent.
+
+Questions, feedback, and contributions are welcome.
+
+GitHub: https://github.com/SibandaPanashe
