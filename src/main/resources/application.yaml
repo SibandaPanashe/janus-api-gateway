@@ -34,3 +34,8 @@ management:
 janus:
   rules:
     directory: src/main/resources/rules
+
+  jwt:
+    secret: ${JANUS_JWT_SECRET:janus-dev-secret-change-in-production-min-256-bits}
+    access-token-ttl: 3600000     # 1 hour in ms
+    refresh-token-ttl: 2592000000 # 30 days in ms
