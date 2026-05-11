@@ -7,6 +7,7 @@ spring:
   application:
     name: janus-gateway
 
+  # Redis
   data:
     redis:
       host: localhost
@@ -18,7 +19,35 @@ spring:
           max-idle: 8
           min-idle: 2
 
-# Expose all actuator health endpoints for Nginx upstream checks
+  # PostgreSQL
+  datasource:
+    url: jdbc:postgresql://localhost:5433/janus
+    username: janus
+    password: janus-dev-password
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 300000
+      connection-timeout: 10000
+
+  # JPA
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  # Flyway
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+# Actuator
 management:
   endpoints:
     web:
