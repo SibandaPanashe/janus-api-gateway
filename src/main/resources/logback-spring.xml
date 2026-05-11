@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- MDC key for trace ID: flows from Nginx X-Request-ID header -->
+    <property name="LOG_PATTERN_CONSOLE"
+              value="%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [traceId=%mdc{traceId:-NONE}] - %msg%n"/>
+
+    <!-- Console appender: human-readable for development -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN_CONSOLE}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- JSON appender: structured for production (file or stdout) -->
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>clientId</includeMdcKeyName>
+            <includeMdcKeyName>plan</includeMdcKeyName>
+            <includeMdcKeyName>requestMethod</includeMdcKeyName>
+            <includeMdcKeyName>requestUri</includeMdcKeyName>
+            <includeMdcKeyName>responseCode</includeMdcKeyName>
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <message>message</message>
+                <logger>logger</logger>
+                <thread>thread</thread>
+                <level>level</level>
+            </fieldNames>
+        </encoder>
+    </appender>
+
+    <!-- Application loggers -->
+    <logger name="com.sibanda.co.zw.janusgateway" level="INFO"/>
+
+    <!-- Drools: keep at WARN to avoid spam -->
+    <logger name="org.drools" level="WARN"/>
+
+    <!-- Spring: keep at INFO -->
+    <logger name="org.springframework" level="INFO"/>
+
+    <!-- HikariCP: keep at WARN unless debugging -->
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+
+    <!-- Active profile-based appender selection -->
+    <springProfile name="dev | default">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod">
+        <root level="INFO">
+            <appender-ref ref="JSON_CONSOLE"/>
+        </root>
+    </springProfile>
+</configuration>

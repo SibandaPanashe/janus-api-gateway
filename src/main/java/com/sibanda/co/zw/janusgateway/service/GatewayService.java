@@ -21,6 +21,13 @@ public class GatewayService {
     private final KeyHashingService keyHashingService;
     private final ClientRepository clientRepository;
 
+    public record RequestResult(
+            boolean allowed,
+            String clientId,
+            String plan,
+            int requestCount
+    ) {}
+
     public GatewayService(DynamicRuleService dynamicRuleService,
                           StringRedisTemplate redisTemplate,
                           KeyHashingService keyHashingService,
@@ -31,7 +38,7 @@ public class GatewayService {
         this.clientRepository = clientRepository;
     }
 
-    public boolean processRequest(String apiKey) {
+    public RequestResult processRequest(String apiKey) {
         ClientProfile client = resolveClient(apiKey);
         log.info("[Janus] Resolved client: plan={}, blocked={}", client.getPlan(), client.isBlocked());
 
@@ -47,11 +54,11 @@ public class GatewayService {
 
         if (client.isBlocked()) {
             log.warn("[Janus] REQUEST DENIED for client: {}", client.getClientId());
-            return false;
+            return new RequestResult(false, client.getClientId(), client.getPlan(), client.getRequestCountSecond());
         }
 
         saveClient(client);
-        return true;
+        return new RequestResult(true, client.getClientId(), client.getPlan(), client.getRequestCountSecond());
     }
 
     private ClientProfile resolveClient(String apiKey) {
@@ -62,7 +69,6 @@ public class GatewayService {
         String clientId = (String) redisTemplate.opsForHash().get(redisKey, "clientId");
         String limitStr = (String) redisTemplate.opsForHash().get(redisKey, "limitPerSecond");
 
-        // Fallback to PostgreSQL if Redis misses
         if (plan == null) {
             var clientEntity = clientRepository.findByApiKeyHash(keyHash);
             if (clientEntity.isPresent()) {
@@ -70,7 +76,6 @@ public class GatewayService {
                 clientId = clientEntity.get().getClientId();
                 limitStr = String.valueOf(clientEntity.get().getRateLimitPerSecond());
 
-                // Repopulate Redis cache
                 redisTemplate.opsForHash().put(redisKey, "clientId", clientId);
                 redisTemplate.opsForHash().put(redisKey, "plan", plan);
                 redisTemplate.opsForHash().put(redisKey, "limitPerSecond", limitStr);

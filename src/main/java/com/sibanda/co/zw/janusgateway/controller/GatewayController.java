@@ -1,7 +1,9 @@
 package com.sibanda.co.zw.janusgateway.controller;
 
+import com.sibanda.co.zw.janusgateway.service.EventLogService;
 import com.sibanda.co.zw.janusgateway.service.GatewayService;
 import com.sibanda.co.zw.janusgateway.service.JwtService;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,23 +16,32 @@ public class GatewayController {
 
     private final GatewayService gatewayService;
     private final JwtService jwtService;
+    private final EventLogService eventLogService;
 
-    public GatewayController(GatewayService gatewayService, JwtService jwtService) {
+    public GatewayController(GatewayService gatewayService,
+                             JwtService jwtService,
+                             EventLogService eventLogService) {
         this.gatewayService = gatewayService;
         this.jwtService = jwtService;
+        this.eventLogService = eventLogService;
     }
 
-    /**
-     * API Key authenticated endpoint.
-     * Clients pass their API key in the X-API-Key header.
-     */
     @GetMapping("/proxy")
     public ResponseEntity<Map<String, Object>> handleRequest(
             @RequestHeader("X-API-Key") String apiKey
     ) {
-        boolean allowed = gatewayService.processRequest(apiKey);
+        GatewayService.RequestResult result = gatewayService.processRequest(apiKey);
 
-        if (!allowed) {
+        if (!result.allowed()) {
+            eventLogService.logEvent(
+                    result.clientId(),
+                    "RATE_LIMITED",
+                    "/api/v1/proxy",
+                    429,
+                    result.plan(),
+                    result.requestCount(),
+                    null
+            );
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
                     Map.of(
                             "error", "rate_limit_exceeded",
@@ -39,6 +50,15 @@ public class GatewayController {
             );
         }
 
+        eventLogService.logEvent(
+                result.clientId(),
+                "REQUEST_ALLOWED",
+                "/api/v1/proxy",
+                200,
+                result.plan(),
+                result.requestCount(),
+                null
+        );
         return ResponseEntity.ok(
                 Map.of(
                         "status", "allowed",
@@ -47,10 +67,6 @@ public class GatewayController {
         );
     }
 
-    /**
-     * JWT-authenticated endpoint.
-     * Clients pass Authorization: Bearer <token> header.
-     */
     @GetMapping("/proxy/jwt")
     public ResponseEntity<Map<String, Object>> handleJwtRequest(
             @RequestHeader("Authorization") String authHeader
@@ -71,9 +87,18 @@ public class GatewayController {
         }
 
         String clientId = clientInfo.get("clientId");
-        boolean allowed = gatewayService.processRequest(clientId);
+        GatewayService.RequestResult result = gatewayService.processRequest(clientId);
 
-        if (!allowed) {
+        if (!result.allowed()) {
+            eventLogService.logEvent(
+                    clientId,
+                    "RATE_LIMITED",
+                    "/api/v1/proxy/jwt",
+                    429,
+                    result.plan(),
+                    result.requestCount(),
+                    "auth=jwt"
+            );
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
                     Map.of(
                             "error", "rate_limit_exceeded",
@@ -82,6 +107,15 @@ public class GatewayController {
             );
         }
 
+        eventLogService.logEvent(
+                clientId,
+                "REQUEST_ALLOWED",
+                "/api/v1/proxy/jwt",
+                200,
+                result.plan(),
+                result.requestCount(),
+                "auth=jwt"
+        );
         return ResponseEntity.ok(
                 Map.of(
                         "status", "allowed",
