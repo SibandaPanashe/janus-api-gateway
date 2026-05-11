@@ -65,3 +65,9 @@ janus:
 logging:
   level:
     com.sibanda: ${LOG_LEVEL:INFO}
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
