@@ -43,6 +43,13 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+  # CORS for dashboard
+  web:
+    cors:
+      allowed-origins: "http://localhost:3000,http://localhost:5173"
+      allowed-methods: GET,POST,PATCH,DELETE
+      allowed-headers: "*"
+
 management:
   endpoints:
     web:
