@@ -118,6 +118,58 @@ public class DashboardController {
         ));
     }
 
+    @PutMapping("/backend")
+    public ResponseEntity<Map<String, Object>> updateBackend(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey,
+            @RequestBody Map<String, String> body) {
+
+        String clientId = resolveClientId(authHeader, apiKey);
+        String backendUrl = body.get("backendUrl");
+        String backendName = body.getOrDefault("backendName", "My API");
+
+        if (backendUrl == null || backendUrl.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "backendUrl is required"));
+        }
+
+        var entity = clientRepository.findByClientId(clientId);
+        if (entity.isPresent()) {
+            var client = entity.get();
+            client.setBackendUrl(backendUrl);
+            client.setBackendName(backendName);
+            clientRepository.save(client);
+        }
+
+        String keyHash = getKeyHashForClient(clientId);
+        if (keyHash != null) {
+            redisTemplate.opsForHash().put("client:hash:" + keyHash, "backendUrl", backendUrl);
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "status", "updated",
+                "backendUrl", backendUrl,
+                "backendName", backendName));
+    }
+
+    @GetMapping("/backend")
+    public ResponseEntity<Map<String, Object>> getBackend(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey) {
+
+        String clientId = resolveClientId(authHeader, apiKey);
+        var entity = clientRepository.findByClientId(clientId);
+
+        return ResponseEntity.ok(Map.of(
+                "backendUrl", entity.map(e -> e.getBackendUrl()).orElse(null),
+                "backendName", entity.map(e -> e.getBackendName()).orElse(null),
+                "configured", entity.map(e -> e.getBackendUrl() != null).orElse(false)));
+    }
+
+    private String getKeyHashForClient(String clientId) {
+        var entity = clientRepository.findByClientId(clientId);
+        return entity.map(e -> e.getApiKeyHash()).orElse(null);
+    }
+
     @GetMapping("/endpoints")
     public ResponseEntity<List<Map<String, Object>>> getTopEndpoints(
             @RequestHeader(value = "Authorization", required = false) String authHeader,

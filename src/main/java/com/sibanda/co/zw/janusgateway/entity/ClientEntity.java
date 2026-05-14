@@ -38,6 +38,12 @@ public class ClientEntity {
     @Column(name = "is_blocked")
     private boolean blocked;
 
+    @Column(name = "backend_url", length = 500)
+    private String backendUrl;
+
+    @Column(name = "backend_name")
+    private String backendName;
+
     @Column(name = "surcharge_balance")
     private double surchargeBalance;
 
