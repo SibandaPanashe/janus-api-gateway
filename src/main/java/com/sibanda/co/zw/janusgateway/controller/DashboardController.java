@@ -2,6 +2,7 @@ package com.sibanda.co.zw.janusgateway.controller;
 
 import com.sibanda.co.zw.janusgateway.repository.ClientRepository;
 import com.sibanda.co.zw.janusgateway.repository.EventLogRepository;
+import com.sibanda.co.zw.janusgateway.service.JwtService;
 import com.sibanda.co.zw.janusgateway.service.KeyHashingService;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
@@ -18,38 +19,59 @@ public class DashboardController {
     private final EventLogRepository eventLogRepository;
     private final ClientRepository clientRepository;
     private final KeyHashingService keyHashingService;
+    private final JwtService jwtService;
 
     public DashboardController(StringRedisTemplate redisTemplate,
                                EventLogRepository eventLogRepository,
                                ClientRepository clientRepository,
-                               KeyHashingService keyHashingService) {
+                               KeyHashingService keyHashingService,
+                               JwtService jwtService) {
         this.redisTemplate = redisTemplate;
         this.eventLogRepository = eventLogRepository;
         this.clientRepository = clientRepository;
         this.keyHashingService = keyHashingService;
+        this.jwtService = jwtService;
     }
 
-    private String resolveClientId(String apiKey) {
-        String keyHash = keyHashingService.hashKey(apiKey);
-        String redisKey = "client:hash:" + keyHash;
-        String clientId = (String) redisTemplate.opsForHash().get(redisKey, "clientId");
-        if (clientId == null) {
-            var entity = clientRepository.findByApiKeyHash(keyHash);
-            if (entity.isPresent()) {
-                clientId = entity.get().getClientId();
+    /**
+     * Resolve client ID from either Authorization: Bearer (JWT) or X-API-Key header.
+     */
+    private String resolveClientId(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey) {
+
+        // Try JWT first
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            var claims = jwtService.validateToken(token);
+            if (claims != null) {
+                return claims.getSubject();
             }
         }
-        return clientId != null ? clientId : "unknown";
+
+        // Fall back to API key
+        if (apiKey != null && !apiKey.isBlank()) {
+            String keyHash = keyHashingService.hashKey(apiKey);
+            String redisKey = "client:hash:" + keyHash;
+            String clientId = (String) redisTemplate.opsForHash().get(redisKey, "clientId");
+            if (clientId == null) {
+                var entity = clientRepository.findByApiKeyHash(keyHash);
+                if (entity.isPresent()) {
+                    clientId = entity.get().getClientId();
+                }
+            }
+            return clientId != null ? clientId : "unknown";
+        }
+
+        return "unknown";
     }
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats(
-            @RequestHeader("X-API-Key") String apiKey) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey) {
 
-        String clientId = resolveClientId(apiKey);
-
-        // Get the last 24h stats
-        List<String> recentTypes = List.of("REQUEST_ALLOWED", "RATE_LIMITED");
+        String clientId = resolveClientId(authHeader, apiKey);
 
         long requestsToday = eventLogRepository.findAll().stream()
                 .filter(e -> clientId.equals(e.getClientId()))
@@ -78,9 +100,10 @@ public class DashboardController {
 
     @GetMapping("/usage")
     public ResponseEntity<Map<String, Object>> getUsage(
-            @RequestHeader("X-API-Key") String apiKey) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey) {
 
-        String clientId = resolveClientId(apiKey);
+        String clientId = resolveClientId(authHeader, apiKey);
 
         long monthlyRequests = eventLogRepository.findAll().stream()
                 .filter(e -> clientId.equals(e.getClientId()))
@@ -97,7 +120,8 @@ public class DashboardController {
 
     @GetMapping("/endpoints")
     public ResponseEntity<List<Map<String, Object>>> getTopEndpoints(
-            @RequestHeader("X-API-Key") String apiKey) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey) {
 
         return ResponseEntity.ok(List.of(
                 Map.of("endpoint", "/api/v1/chat", "requests", 2341),
@@ -110,8 +134,12 @@ public class DashboardController {
 
     @GetMapping("/keys")
     public ResponseEntity<List<Map<String, Object>>> getApiKeys(
-            @RequestHeader("X-API-Key") String apiKey) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey) {
 
+        String clientId = resolveClientId(authHeader, apiKey);
+
+        // In production: query clientRepository for keys belonging to this user
         return ResponseEntity.ok(List.of(
                 Map.of(
                         "name", "Production",
