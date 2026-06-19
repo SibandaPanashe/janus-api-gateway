@@ -43,6 +43,11 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+stripe:
+  secret-key: ${STRIPE_SECRET_KEY:sk_test_placeholder}
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_placeholder}
+  pro-price-id: ${STRIPE_PRO_PRICE_ID:price_placeholder}
+
 
 management:
   endpoints:

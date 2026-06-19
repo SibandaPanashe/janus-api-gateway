@@ -1,10 +1,7 @@
 package com.sibanda.co.zw.janusgateway.controller;
 
 import com.sibanda.co.zw.janusgateway.repository.ClientRepository;
-import com.sibanda.co.zw.janusgateway.service.EventLogService;
-import com.sibanda.co.zw.janusgateway.service.GatewayService;
-import com.sibanda.co.zw.janusgateway.service.JwtService;
-import com.sibanda.co.zw.janusgateway.service.KeyHashingService;
+import com.sibanda.co.zw.janusgateway.service.*;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +25,7 @@ public class GatewayController {
     private final StringRedisTemplate redisTemplate;
     private final ClientRepository clientRepository;
     private final KeyHashingService keyHashingService;
+    private final UsageBroadcastService usageBroadcastService;
     private final RestTemplate restTemplate = new RestTemplate();
 
     public GatewayController(GatewayService gatewayService,
@@ -35,13 +33,15 @@ public class GatewayController {
                              EventLogService eventLogService,
                              StringRedisTemplate redisTemplate,
                              ClientRepository clientRepository,
-                             KeyHashingService keyHashingService) {
+                             KeyHashingService keyHashingService,
+                             UsageBroadcastService usageBroadcastService) {
         this.gatewayService = gatewayService;
         this.jwtService = jwtService;
         this.eventLogService = eventLogService;
         this.redisTemplate = redisTemplate;
         this.clientRepository = clientRepository;
         this.keyHashingService = keyHashingService;
+        this.usageBroadcastService = usageBroadcastService;
     }
 
     @GetMapping("/proxy/**")
@@ -49,19 +49,22 @@ public class GatewayController {
             @RequestHeader("X-API-Key") String apiKey,
             HttpServletRequest request) {
 
-        // 1. Authenticate and rate limit
         GatewayService.RequestResult result = gatewayService.processRequest(apiKey);
 
         if (!result.allowed()) {
             eventLogService.logEvent(result.clientId(), "RATE_LIMITED",
                     request.getRequestURI(), 429, result.plan(), result.requestCount(), null);
+            // Push real-time WebSocket notification
+            usageBroadcastService.pushRateLimitEvent(
+                    result.clientId(), request.getRequestURI(),
+                    result.requestCount(),
+                    result.plan().equals("free") ? 10 : 100);
             return ResponseEntity.status(429).body(Map.of(
                     "error", "rate_limit_exceeded",
                     "message", "You have exceeded your plan's rate limit. Upgrade at dashboard.janus.local"
             ));
         }
 
-        // 2. Resolve backend URL
         String keyHash = keyHashingService.hashKey(apiKey);
         String redisKey = "client:hash:" + keyHash;
         String backendUrl = (String) redisTemplate.opsForHash().get(redisKey, "backendUrl");
@@ -73,7 +76,6 @@ public class GatewayController {
             }
         }
 
-        // 3. If no backend, return mock response
         if (backendUrl == null || backendUrl.isBlank()) {
             eventLogService.logEvent(result.clientId(), "REQUEST_ALLOWED",
                     request.getRequestURI(), 200, result.plan(), result.requestCount(), null);
@@ -84,7 +86,6 @@ public class GatewayController {
             ));
         }
 
-        // 4. Forward to actual backend
         String path = request.getRequestURI().replace("/api/v1/proxy", "");
         String queryString = request.getQueryString();
         String targetUrl = backendUrl + path + (queryString != null ? "?" + queryString : "");
@@ -130,6 +131,10 @@ public class GatewayController {
         if (!result.allowed()) {
             eventLogService.logEvent(clientId, "RATE_LIMITED",
                     "/api/v1/proxy/jwt", 429, result.plan(), result.requestCount(), "auth=jwt");
+            usageBroadcastService.pushRateLimitEvent(
+                    clientId, "/api/v1/proxy/jwt",
+                    result.requestCount(),
+                    result.plan().equals("free") ? 10 : 100);
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
                     "error", "rate_limit_exceeded",
                     "message", "You have exceeded your plan's rate limit. Upgrade at dashboard.janus.local"));
