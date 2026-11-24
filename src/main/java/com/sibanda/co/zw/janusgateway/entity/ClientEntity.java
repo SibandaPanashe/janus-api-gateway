@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "clients")
@@ -17,8 +18,7 @@ import java.time.Instant;
 public class ClientEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private String id;
+    private UUID id; // Changed to UUID, removed @GeneratedValue
 
     @Column(name = "client_id", unique = true, nullable = false)
     private String clientId;
@@ -55,6 +55,7 @@ public class ClientEntity {
 
     @PrePersist
     protected void onCreate() {
+        if (id == null) id = UUID.randomUUID(); // Generate ID in Java
         createdAt = Instant.now();
         updatedAt = Instant.now();
     }

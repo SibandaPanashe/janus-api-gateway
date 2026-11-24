@@ -34,6 +34,9 @@ public class RuleEntity {
     @Column(name = "is_active", nullable = false)
     private boolean active;
 
+    @Column(name = "service_id")
+    private java.util.UUID serviceId;
+
     @Column(nullable = false)
     private int version;
 

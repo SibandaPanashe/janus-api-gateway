@@ -1,6 +1,9 @@
 package com.sibanda.co.zw.janusgateway.controller;
 
+import com.sibanda.co.zw.janusgateway.entity.ClientEntity;
+import com.sibanda.co.zw.janusgateway.entity.ServiceEntity;
 import com.sibanda.co.zw.janusgateway.repository.ClientRepository;
+import com.sibanda.co.zw.janusgateway.repository.ServiceRepository;
 import com.sibanda.co.zw.janusgateway.service.*;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -11,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -24,6 +28,7 @@ public class GatewayController {
     private final EventLogService eventLogService;
     private final StringRedisTemplate redisTemplate;
     private final ClientRepository clientRepository;
+    private final ServiceRepository serviceRepository; // <--- ADDED THIS
     private final KeyHashingService keyHashingService;
     private final UsageBroadcastService usageBroadcastService;
     private final RestTemplate restTemplate = new RestTemplate();
@@ -33,6 +38,7 @@ public class GatewayController {
                              EventLogService eventLogService,
                              StringRedisTemplate redisTemplate,
                              ClientRepository clientRepository,
+                             ServiceRepository serviceRepository, // <--- ADDED THIS
                              KeyHashingService keyHashingService,
                              UsageBroadcastService usageBroadcastService) {
         this.gatewayService = gatewayService;
@@ -40,13 +46,14 @@ public class GatewayController {
         this.eventLogService = eventLogService;
         this.redisTemplate = redisTemplate;
         this.clientRepository = clientRepository;
+        this.serviceRepository = serviceRepository; // <--- ADDED THIS
         this.keyHashingService = keyHashingService;
         this.usageBroadcastService = usageBroadcastService;
     }
 
     @GetMapping("/proxy/**")
     public ResponseEntity<?> handleProxyRequest(
-            @RequestHeader("X-API-Key") String apiKey,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey,
             HttpServletRequest request) {
 
         GatewayService.RequestResult result = gatewayService.processRequest(apiKey);
@@ -54,7 +61,6 @@ public class GatewayController {
         if (!result.allowed()) {
             eventLogService.logEvent(result.clientId(), "RATE_LIMITED",
                     request.getRequestURI(), 429, result.plan(), result.requestCount(), null);
-            // Push real-time WebSocket notification
             usageBroadcastService.pushRateLimitEvent(
                     result.clientId(), request.getRequestURI(),
                     result.requestCount(),
@@ -65,15 +71,11 @@ public class GatewayController {
             ));
         }
 
-        String keyHash = keyHashingService.hashKey(apiKey);
-        String redisKey = "client:hash:" + keyHash;
-        String backendUrl = (String) redisTemplate.opsForHash().get(redisKey, "backendUrl");
-
-        if (backendUrl == null) {
-            var entity = clientRepository.findByApiKeyHash(keyHash);
-            if (entity.isPresent() && entity.get().getBackendUrl() != null) {
-                backendUrl = entity.get().getBackendUrl();
-            }
+        // --- FIX: Fetch the backend URL from the Services table ---
+        String backendUrl = null;
+        List<ServiceEntity> services = serviceRepository.findByClientId(result.clientId());
+        if (!services.isEmpty()) {
+            backendUrl = services.get(0).getBackendUrl(); // Get the first registered service
         }
 
         if (backendUrl == null || backendUrl.isBlank()) {
@@ -82,7 +84,7 @@ public class GatewayController {
             return ResponseEntity.ok(Map.of(
                     "status", "allowed",
                     "message", "Request processed successfully",
-                    "note", "No backend configured. Set your API URL in the dashboard."
+                    "note", "No backend configured for this client. Set your API URL in the dashboard."
             ));
         }
 
@@ -100,7 +102,7 @@ public class GatewayController {
                     .headers(response.getHeaders())
                     .body(response.getBody());
         } catch (Exception e) {
-            log.warn("[Proxy] Backend unreachable: {}", targetUrl);
+            log.warn("[Proxy] Backend unreachable: {}", targetUrl, e);
             return ResponseEntity.status(502).body(Map.of(
                     "error", "backend_unreachable",
                     "message", "Could not reach your backend at " + backendUrl
@@ -110,7 +112,7 @@ public class GatewayController {
 
     @GetMapping("/proxy/jwt")
     public ResponseEntity<Map<String, Object>> handleJwtRequest(
-            @RequestHeader("Authorization") String authHeader) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
 
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
@@ -126,7 +128,7 @@ public class GatewayController {
         }
 
         String clientId = clientInfo.get("clientId");
-        GatewayService.RequestResult result = gatewayService.processRequest(clientId);
+        GatewayService.RequestResult result = gatewayService.processJwtRequest(clientId);
 
         if (!result.allowed()) {
             eventLogService.logEvent(clientId, "RATE_LIMITED",

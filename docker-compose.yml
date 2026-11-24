@@ -27,7 +27,8 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-janus} -d ${POSTGRES_DB:-janus}"]
+      # Changed to simply check if PG is accepting connections (removed the -U and -d flags)
+      test: ["CMD-SHELL", "pg_isready"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -50,7 +51,8 @@ services:
       redis:
         condition: service_healthy
       postgres:
-        condition: service_healthy
+        # Changed to service_started so Spring Boot can handle DB retries itself
+        condition: service_started
     networks:
       - janus-net
     healthcheck:

@@ -74,8 +74,15 @@ public class RuleAdminController {
     @PatchMapping("/{id}/toggle")
     public ResponseEntity<Map<String, Object>> toggleRule(
             @PathVariable String id,
-            @RequestBody Map<String, Boolean> body) {
-        boolean active = body.getOrDefault("active", true);
+            @RequestBody(required = false) Map<String, Boolean> body) {
+
+        RuleEntity rule = ruleRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + id));
+
+        boolean active = (body != null && body.containsKey("active"))
+                ? body.get("active")
+                : !rule.isActive();
+
         dynamicRuleService.toggleRule(id, active);
         return ResponseEntity.ok(Map.of("id", id, "active", active));
     }
