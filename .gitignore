@@ -36,3 +36,4 @@ HELP.md
 # Environment secrets
 .env
 !.env.example
+frontend/
